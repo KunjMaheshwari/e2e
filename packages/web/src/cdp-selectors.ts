@@ -50,7 +50,13 @@ export async function registerCdpSelectors(context: BrowserContext, budget: Conn
 export async function requireCdpShadowTracking(page: Page, budget: ConnectionBudget): Promise<void> {
   if (budget.signal.aborted) throw connectionAbort(budget.signal, 'CDP tracking verification');
   const tracked = await Promise.all(page.frames().map((frame) =>
-    frame.evaluate((key) => Symbol.for(key) in globalThis, CLOSED_SHADOW_ROOTS_KEY),
+    frame.evaluate((key) => {
+      const symbol = Symbol.for(key);
+      if (!(symbol in globalThis)) return false;
+      const record = (globalThis as Record<PropertyKey, unknown>)[symbol];
+      return record !== null && (typeof record === 'object' || typeof record === 'function')
+        && typeof (record as { queryLightAndOpen?: unknown }).queryLightAndOpen === 'function';
+    }, CLOSED_SHADOW_ROOTS_KEY),
   ));
   if (budget.signal.aborted) throw connectionAbort(budget.signal, 'CDP tracking verification');
   if (tracked.some((present) => !present)) {

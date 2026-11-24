@@ -1,10 +1,17 @@
 /** The CDP compatibility boundary must support Playwright's proxy channel and fail closed otherwise. */
-import type { BrowserContext } from 'playwright-core';
-import { expect, it, vi } from 'vitest';
-import { registerCdpSelectors } from '../../src/cdp-selectors.ts';
+import type { BrowserContext, Page } from 'playwright-core';
+import { afterEach, expect, it, vi } from 'vitest';
+import { registerCdpSelectors, requireCdpShadowTracking } from '../../src/cdp-selectors.ts';
+import { CLOSED_SHADOW_ROOTS_KEY } from '../../src/closed-shadow.ts';
 import { SELECTOR_ENGINES } from '../../src/selector-engines.ts';
 
+const TRACKING_SYMBOL = Symbol.for(CLOSED_SHADOW_ROOTS_KEY);
+
 const budget = () => ({ timeoutMs: 500, signal: new AbortController().signal });
+
+afterEach(() => {
+  Reflect.deleteProperty(globalThis, TRACKING_SYMBOL);
+});
 
 it('refuses an unsupported context before any locator or capture can run, naming both', async () => {
   await expect(registerCdpSelectors({} as BrowserContext, budget())).rejects.toMatchObject({
@@ -22,4 +29,27 @@ it('tolerates only the exact owned-name duplicates from a version that already s
   const context = { _channel: { registerSelectorEngine: register } } as unknown as BrowserContext;
   await expect(registerCdpSelectors(context, budget())).resolves.toBeUndefined();
   await expect(registerCdpSelectors(context, budget())).rejects.toThrow('"other"');
+});
+
+it('requires both the tracking record and queryLightAndOpen helper on every CDP frame', async () => {
+  const page = {
+    frames: () => [
+      { evaluate: async <A, R>(fn: (arg: A) => R, arg: A) => fn(arg) },
+    ],
+  } as unknown as Page;
+
+  await expect(requireCdpShadowTracking(page, budget())).rejects.toMatchObject({
+    code: 'ENGINE_FAILURE',
+    message: expect.stringMatching(/closed shadow root tracking is unavailable/),
+  });
+
+  const incomplete = new WeakMap();
+  Object.defineProperty(globalThis, TRACKING_SYMBOL, { value: incomplete, configurable: true, writable: true });
+  await expect(requireCdpShadowTracking(page, budget())).rejects.toMatchObject({
+    code: 'ENGINE_FAILURE',
+    message: expect.stringMatching(/closed shadow root tracking is unavailable/),
+  });
+
+  Object.defineProperty(incomplete, 'queryLightAndOpen', { value: () => [], configurable: true });
+  await expect(requireCdpShadowTracking(page, budget())).resolves.toBeUndefined();
 });

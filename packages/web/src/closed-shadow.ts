@@ -37,6 +37,47 @@ export const CLOSED_SHADOW_ROOTS_INIT_SCRIPT = `(() => {
   if (Object.prototype.hasOwnProperty.call(globalThis, key)) return;
   const roots = new WeakMap();
   Object.defineProperty(roots, 'count', { value: 0, enumerable: false, configurable: false, writable: true });
+  const apply = Reflect.apply;
+  const docQsa = typeof Document === 'function' ? Document.prototype?.querySelectorAll : undefined;
+  const elQsa = Element.prototype?.querySelectorAll;
+  const srQsa = typeof ShadowRoot === 'function' ? ShadowRoot.prototype?.querySelectorAll : undefined;
+  const getShadowRoot = Object.getOwnPropertyDescriptor(Element.prototype, 'shadowRoot')?.get;
+  const getNodeType = typeof Node === 'function' ? Object.getOwnPropertyDescriptor(Node.prototype, 'nodeType')?.get : undefined;
+  const getListLength = typeof NodeList === 'function' ? Object.getOwnPropertyDescriptor(NodeList.prototype, 'length')?.get : undefined;
+  const getListItem = typeof NodeList === 'function' ? NodeList.prototype?.item : undefined;
+  if (typeof docQsa === 'function' && typeof elQsa === 'function' && typeof getShadowRoot === 'function' && typeof getNodeType === 'function') {
+    const queryAllNative = (node, selector) => {
+      const type = apply(getNodeType, node, []);
+      if (type === 9) return apply(docQsa, node, [selector]);
+      if (type === 1) return apply(elQsa, node, [selector]);
+      if (type === 11 && typeof srQsa === 'function') return apply(srQsa, node, [selector]);
+      return null;
+    };
+    const forEachNode = (list, fn) => {
+      if (list === null) return;
+      const len = typeof getListLength === 'function' ? apply(getListLength, list, []) : list.length;
+      for (let i = 0; i < len; i += 1) {
+        fn(typeof getListItem === 'function' ? apply(getListItem, list, [i]) : list[i]);
+      }
+    };
+    const queryLightAndOpen = (root, selector) => {
+      const out = [];
+      const visit = (node) => {
+        forEachNode(queryAllNative(node, selector), (el) => { out[out.length] = el; });
+        if (apply(getNodeType, node, []) === 1) {
+          const ownShadow = apply(getShadowRoot, node, []);
+          if (ownShadow !== null) visit(ownShadow);
+        }
+        forEachNode(queryAllNative(node, '*'), (el) => {
+          const sr = apply(getShadowRoot, el, []);
+          if (sr !== null) visit(sr);
+        });
+      };
+      visit(root);
+      return out;
+    };
+    Object.defineProperty(roots, 'queryLightAndOpen', { value: queryLightAndOpen, enumerable: false, configurable: false, writable: false });
+  }
   Object.defineProperty(globalThis, key, { value: roots, enumerable: false, configurable: false, writable: false });
   const attachShadow = Element.prototype.attachShadow;
   Element.prototype.attachShadow = function (init) {
@@ -51,6 +92,9 @@ export const CLOSED_SHADOW_ROOTS_INIT_SCRIPT = `(() => {
 
 /** Playwright selector engine name; `e2e-closed=<css>` matches inside recorded closed shadow roots. */
 export const CLOSED_SHADOW_SELECTOR_ENGINE = 'e2e-closed';
+
+/** Playwright selector engine name; `e2e-mask=<css>` matches light DOM and open shadow roots in the main world using captured native DOM methods. */
+export const MAIN_WORLD_MASK_SELECTOR_ENGINE = 'e2e-mask';
 
 /**
  * Playwright selector engine name for the roots a semantic query searches.
@@ -146,8 +190,32 @@ const SEARCH_ROOTS_SELECTOR_ENGINE_SOURCE = `() => {${CLOSED_SHADOW_HELPERS_SOUR
   return { queryAll, query: (root, selector) => queryAll(root, selector)[0] ?? null };
 }`;
 
-/** The two closed-root selector engines; `selector-engines.ts` lists them with the label engine for registration. */
+/**
+ * The engine behind `e2e-mask=<css>`: every element matching the CSS selector
+ * across light DOM and open shadow roots, queried in the main world through the
+ * native DOM methods captured by the init script before page scripts ran.
+ * Running in the main world avoids WebKit's utility-world stall in rewritten
+ * `javascript:` iframes while failing closed on any document that lacks the
+ * init hook.
+ */
+const MAIN_WORLD_MASK_SELECTOR_ENGINE_SOURCE = `() => {
+  const key = Symbol.for(${JSON.stringify(CLOSED_SHADOW_ROOTS_KEY)});
+  const queryAll = (root, selector) => {
+    if (!(key in globalThis)) {
+      throw new Error('secure-field mask tracking is unavailable for this document');
+    }
+    const record = globalThis[key];
+    if (record === null || (typeof record !== 'object' && typeof record !== 'function') || typeof record.queryLightAndOpen !== 'function') {
+      throw new Error('secure-field mask tracking is unavailable for this document');
+    }
+    return record.queryLightAndOpen(root, selector);
+  };
+  return { queryAll, query: (root, selector) => queryAll(root, selector)[0] ?? null };
+}`;
+
+/** The closed-root and main-world mask selector engines; `selector-engines.ts` lists them with the other engines for registration. */
 export const CLOSED_SHADOW_SELECTOR_ENGINES: readonly { readonly name: string; readonly source: string }[] = [
   { name: CLOSED_SHADOW_SELECTOR_ENGINE, source: CLOSED_SHADOW_SELECTOR_ENGINE_SOURCE },
+  { name: MAIN_WORLD_MASK_SELECTOR_ENGINE, source: MAIN_WORLD_MASK_SELECTOR_ENGINE_SOURCE },
   { name: SEARCH_ROOTS_SELECTOR_ENGINE, source: SEARCH_ROOTS_SELECTOR_ENGINE_SOURCE },
 ];

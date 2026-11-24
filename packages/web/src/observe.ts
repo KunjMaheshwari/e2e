@@ -3,7 +3,7 @@
 import type { Locator, Page } from 'playwright-core';
 import type { ObservationPixels, OperationContext, ViewportSize } from '@e2e-dev/core/engine';
 import { CaptureScope } from './capture-scope.ts';
-import { CLOSED_SHADOW_SELECTOR_ENGINE } from './closed-shadow.ts';
+import { CLOSED_SHADOW_SELECTOR_ENGINE, MAIN_WORLD_MASK_SELECTOR_ENGINE } from './closed-shadow.ts';
 import { readableFrames } from './frame-document.ts';
 import { SECURE_FIELD_SELECTOR } from './read-node.ts';
 import { withHiddenCaret } from './screenshot-caret.ts';
@@ -21,18 +21,20 @@ const MASK_COLOR = '#000000';
 
 /**
  * Two mask locators per frame Playwright can reach, covering every secure
- * field: one through light DOM and open shadow roots, one through the closed
- * roots the reader also walks. Sweeping every frame rather than only the
- * frames an observation walked makes the masked set a superset of the observed
- * secure set - the direction that is safe. Shared by the observation pixels
- * and the artifact screenshot so both are redacted at the source by the same
- * rule. A frame with no readable document shows nothing to mask, and probing
- * it would wait for its navigation to commit.
+ * field: one through light DOM and open shadow roots (`e2e-mask`, queried in
+ * the main world via captured native DOM methods so rewritten `javascript:`
+ * frames in WebKit do not stall Playwright's utility world), and one through
+ * the closed roots the reader also walks (`e2e-closed`). Sweeping every frame
+ * rather than only the frames an observation walked makes the masked set a
+ * superset of the observed secure set - the direction that is safe. Shared by
+ * the observation pixels and the artifact screenshot so both are redacted at
+ * the source by the same rule. A frame with no readable document shows nothing
+ * to mask, and probing it would wait for its navigation to commit.
  */
 export async function secureFieldMasks(page: Page): Promise<Locator[]> {
   return (await readableFrames(page.frames()))
     .flatMap((frame) => [
-      frame.locator(SECURE_FIELD_SELECTOR),
+      frame.locator(`${MAIN_WORLD_MASK_SELECTOR_ENGINE}=${SECURE_FIELD_SELECTOR}`),
       frame.locator(`${CLOSED_SHADOW_SELECTOR_ENGINE}=${SECURE_FIELD_SELECTOR}`),
     ]);
 }

@@ -11,6 +11,7 @@ import {
   CLOSED_SHADOW_ROOTS_KEY,
   CLOSED_SHADOW_SELECTOR_ENGINE,
   CLOSED_SHADOW_SELECTOR_ENGINES,
+  MAIN_WORLD_MASK_SELECTOR_ENGINE,
   SEARCH_ROOTS_SELECTOR_ENGINE,
 } from '../../src/closed-shadow.ts';
 
@@ -121,5 +122,25 @@ describe('closed shadow root record', () => {
     } finally {
       Reflect.set(globalThis, 'WeakMap', native);
     }
+  });
+
+  it('refuses an untracked or incomplete document in the main-world mask engine', () => {
+    const maskEngine = engine(MAIN_WORLD_MASK_SELECTOR_ENGINE);
+    const document = root(9);
+    expect(() => maskEngine.queryAll(document, 'input[type="password" i]')).toThrow(/mask tracking is unavailable/);
+    // A record without queryLightAndOpen also fails closed.
+    publish(0);
+    expect(() => maskEngine.queryAll(document, 'input[type="password" i]')).toThrow(/mask tracking is unavailable/);
+  });
+
+  it('delegates e2e-mask queries to the captured queryLightAndOpen helper on the record', () => {
+    const record = publish(0);
+    const field = { tagName: 'INPUT' };
+    const queryLightAndOpen = vi.fn(() => [field]);
+    Object.defineProperty(record, 'queryLightAndOpen', { value: queryLightAndOpen, configurable: true });
+    const maskEngine = engine(MAIN_WORLD_MASK_SELECTOR_ENGINE);
+    const document = root(9);
+    expect(maskEngine.queryAll(document, 'input[type="password" i]')).toEqual([field]);
+    expect(queryLightAndOpen).toHaveBeenCalledWith(document, 'input[type="password" i]');
   });
 });
