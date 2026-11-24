@@ -32,24 +32,30 @@ it('tolerates only the exact owned-name duplicates from a version that already s
 });
 
 it('requires both the tracking record and queryLightAndOpen helper on every CDP frame', async () => {
-  const page = {
-    frames: () => [
-      { evaluate: async <A, R>(fn: (arg: A) => R, arg: A) => fn(arg) },
-    ],
-  } as unknown as Page;
+  const trackedFrame = { evaluate: async <A, R>(fn: (arg: A) => R, arg: A) => fn(arg) };
+  const singleFramePage = { frames: () => [trackedFrame] } as unknown as Page;
 
-  await expect(requireCdpShadowTracking(page, budget())).rejects.toMatchObject({
+  await expect(requireCdpShadowTracking(singleFramePage, budget())).rejects.toMatchObject({
     code: 'ENGINE_FAILURE',
-    message: expect.stringMatching(/closed shadow root tracking is unavailable/),
+    message: expect.stringMatching(/closed shadow root tracking or the queryLightAndOpen mask helper is unavailable/),
   });
 
   const incomplete = new WeakMap();
   Object.defineProperty(globalThis, TRACKING_SYMBOL, { value: incomplete, configurable: true, writable: true });
-  await expect(requireCdpShadowTracking(page, budget())).rejects.toMatchObject({
+  await expect(requireCdpShadowTracking(singleFramePage, budget())).rejects.toMatchObject({
     code: 'ENGINE_FAILURE',
-    message: expect.stringMatching(/closed shadow root tracking is unavailable/),
+    message: expect.stringMatching(/closed shadow root tracking or the queryLightAndOpen mask helper is unavailable/),
   });
 
   Object.defineProperty(incomplete, 'queryLightAndOpen', { value: () => [], configurable: true });
-  await expect(requireCdpShadowTracking(page, budget())).resolves.toBeUndefined();
+  const twoTrackedFramesPage = { frames: () => [trackedFrame, trackedFrame] } as unknown as Page;
+  await expect(requireCdpShadowTracking(twoTrackedFramesPage, budget())).resolves.toBeUndefined();
+
+  // Rejects when a second frame lacks the tracking record even if the first frame passes.
+  const untrackedSecondFrame = { evaluate: async () => false };
+  const mixedFramesPage = { frames: () => [trackedFrame, untrackedSecondFrame] } as unknown as Page;
+  await expect(requireCdpShadowTracking(mixedFramesPage, budget())).rejects.toMatchObject({
+    code: 'ENGINE_FAILURE',
+    message: expect.stringMatching(/closed shadow root tracking or the queryLightAndOpen mask helper is unavailable/),
+  });
 });

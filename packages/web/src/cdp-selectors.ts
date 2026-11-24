@@ -46,7 +46,7 @@ export async function registerCdpSelectors(context: BrowserContext, budget: Conn
   }
 }
 
-/** Existing closed roots cannot be recovered if their document loaded without the tracking hook. */
+/** Every frame must carry both the closed-shadow tracking record and its captured `queryLightAndOpen` mask helper; a document that loaded without the current init hook cannot be recovered. */
 export async function requireCdpShadowTracking(page: Page, budget: ConnectionBudget): Promise<void> {
   if (budget.signal.aborted) throw connectionAbort(budget.signal, 'CDP tracking verification');
   const tracked = await Promise.all(page.frames().map((frame) =>
@@ -60,6 +60,6 @@ export async function requireCdpShadowTracking(page: Page, budget: ConnectionBud
   ));
   if (budget.signal.aborted) throw connectionAbort(budget.signal, 'CDP tracking verification');
   if (tracked.some((present) => !present)) {
-    throw new EngineError('ENGINE_FAILURE', 'CDP recovery failed: closed shadow root tracking is unavailable after a document changed while disconnected; locators and secure-field masks need it', { retryable: false });
+    throw new EngineError('ENGINE_FAILURE', 'CDP recovery failed: closed shadow root tracking or the queryLightAndOpen mask helper is unavailable after a document changed while disconnected; locators and secure-field masks need both', { retryable: false });
   }
 }
